@@ -1,0 +1,259 @@
+"""
+
+"""
+import dash
+from dash import html, dcc
+import plotly.express as px
+from dash.dependencies import Input, Output
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+
+
+END_DATE = date.today()
+START_DATE = END_DATE - relativedelta(years=2)
+
+app = dash.Dash(__name__)
+local_ch_conn = db.clickhouse_connect('db_test_local')
+
+graph_container_style = {
+    'background'   : '#f8f9fa',
+    'border'       : '1px solid #dee2e6',
+    'padding'      : '10px',
+    'border-radius': '5px',
+    'box-shadow'   : '0 2px 4px rgba(0,0,0,0.1)',
+    'margin'       : '10px'
+    }
+
+text_container_style = {
+    'background'     : '#f8f9fa',
+    'border'         : '1px solid #dee2e6',
+    'padding'        : '20px',
+    'border-radius'  : '5px',
+    'box-shadow'     : '0 2px 4px rgba(0,0,0,0.1)',
+    'margin'         : '10px',
+    'display'        : 'flex',
+    'justify-content': 'center',
+    'align-items'    : 'center',
+    'gridColumn'     : 'span 2',
+    'fontSize'       : '24px',
+    }
+
+grid_style = {
+    'display'            : 'grid',
+    'gridTemplateColumns': 'repeat(2, 1fr)',
+    'gap'                : '10px',
+    'padding'            : '10px'
+    }
+
+
+def pull_tracking_event_totals(start_date, end_date):
+    """
+
+    """
+    query = f"""
+    SELECT event_type_name AS event,
+    uniq(created_at) AS count
+    FROM reporting_pc.tracking
+    WHERE dt BETWEEN '{start_date}' AND '{end_date}'
+    GROUP BY event;
+    """
+    return local_ch_conn.query_dataframe(query)
+
+
+def pull_swipes_per_chat(start_date, end_date):
+    """
+
+    """
+    query = f"""
+    SELECT countIf(created_at, event_type IN (1, 2, 3)) AS num_swipes,
+           uniq(chat_id) AS total_chats,
+           round(num_swipes/total_chats, 2) AS avg_swipes_per_chat
+    FROM reporting_pc.tracking
+    WHERE dt BETWEEN '{start_date}' AND '{end_date}';
+    """
+    return local_ch_conn.query_dataframe(query)
+
+
+def pull_chat_to_vr_open_rate(start_date, end_date):
+    """
+
+    """
+    query = f"""
+    SELECT formatDateTime(dt, '%Y-%m') AS month,
+           uniq(chat_id) AS num_chats,
+           uniqIf(chat_id, vr_session_id > 0) AS vr_opens,
+           round(100*vr_opens/num_chats) AS chat_to_vr_conversion_pct
+    FROM reporting_pc.tracking
+    WHERE dt BETWEEN '{start_date}' AND '{end_date}'
+    GROUP BY month
+    ORDER BY month;
+    """
+    return local_ch_conn.query_dataframe(query)
+
+
+def pull_monthly_average_matches_per_user(start_date, end_date):
+    """
+
+    """
+    query = f"""
+    SELECT formatDateTime(dt, '%Y-%m') AS month,
+    uniq(user_id) AS num_users,
+    uniqIf(created_at, event_type IN (2, 3)) AS swipe_matches,
+    round(swipe_matches/num_users, 2) AS avg_matches_per_user
+    FROM reporting_pc.tracking
+    WHERE dt BETWEEN '{start_date}' AND '{end_date}'
+    GROUP BY month
+    ORDER BY month;
+    """
+    return local_ch_conn.query_dataframe(query)
+
+
+def pull_today_conversion_rate():
+    """
+
+    """
+    today = datetime.today().strftime('%Y-%m-%d')
+    query = f'''
+    SELECT uniq(chat_id) AS num_chats,
+           uniqIf(chat_id, vr_session_id > 0) AS vr_opens,
+           round((100*vr_opens/num_chats), 2) AS chat_to_vr_conversion_pct
+    from reporting_pc.tracking
+    WHERE dt = '{today}';
+    '''
+    return local_ch_conn.query_dataframe(query)
+
+
+def pull_monthly_unique_users(start_date, end_date):
+    """
+
+    """
+    query = f'''
+    SELECT formatDateTime(dt, '%Y-%m') AS month,
+           uniq(user_id) AS unique_users
+    FROM reporting_pc.tracking
+    WHERE dt BETWEEN '{start_date}' AND '{end_date}'
+    GROUP BY month
+    ORDER BY month;
+    '''
+    return local_ch_conn.query_dataframe(query)
+
+
+def pull_today_unique_users():
+    """
+
+    """
+    today = datetime.today().strftime('%Y-%m-%d')
+    query = f'''
+    SELECT uniq(user_id) AS unique_users
+    FROM reporting_pc.tracking
+    WHERE dt = '{today}'
+    '''
+    return local_ch_conn.query_dataframe(query)
+
+
+app.layout = html.Div([
+    html.H1("Project Combustion Live Dashboard", style={'text-align': 'center', 'gridColumn': 'span 2'}),
+    dcc.Interval(
+            id='interval-component',
+            interval=1 * 6000,  # in milliseconds
+            n_intervals=0
+            ),
+    html.Div(id='swipes-per-chat-display', style=text_container_style),
+    html.Div([
+        dcc.Graph(
+                id='event-totals-graph',
+                config={'displayModeBar': False}
+                )
+        ], style=graph_container_style),
+    html.Div([
+        dcc.Graph(
+                id='chat-to-vr-timeseries',
+                config={'displayModeBar': False}
+                )
+        ], style=graph_container_style),
+    html.Div(id='vr-entry-today', style=text_container_style),
+    html.Div([
+        dcc.Graph(
+                id='monthly-unique-users-graph',
+                config={'displayModeBar': False}
+                )
+        ], style=graph_container_style),
+    html.Div([
+        dcc.Graph(
+                id='monthly-average-matches-graph',
+                config={'displayModeBar': False}
+                )
+        ], style=graph_container_style),
+    html.Div(id='unique-users-today', style=text_container_style)
+    ], style={'fontFamily': 'Arial, sans-serif', **grid_style})
+
+
+@app.callback([Output('swipes-per-chat-display', 'children'),
+               Output('event-totals-graph', 'figure'),
+               Output('chat-to-vr-timeseries', 'figure'),
+               Output('vr-entry-today', 'children'),
+               Output('monthly-unique-users-graph', 'figure'),
+               Output('monthly-average-matches-graph', 'figure'),
+               Output('unique-users-today', 'children')],
+              [Input('interval-component', 'n_intervals'),
+               Input('interval-component', 'n_intervals'),
+               Input('interval-component', 'n_intervals'),
+               Input('interval-component', 'n_intervals'),
+               Input('interval-component', 'n_intervals'),
+               Input('interval-component', 'n_intervals'),
+               Input('interval-component', 'n_intervals')]
+              )
+def update_event_totals_graph(n1, n2, n3, n4, n5, n6, n7):
+    df1 = pull_tracking_event_totals(START_DATE, END_DATE)
+
+    start_month = START_DATE[:7]
+    end_month = END_DATE[:7]
+
+    fig1 = px.bar(df1, x='event', y='count', color='event',
+                  labels={'event': 'Event Type', 'count': 'Number of Events'})
+    fig1.update_layout(
+            title={'text': f"Event Totals ({start_month} to {end_month})", 'x': 0.5, 'xanchor': 'center'},
+            showlegend=False
+            )
+
+    df2 = pull_chat_to_vr_open_rate(START_DATE, END_DATE)
+    fig2 = px.line(df2, x='month', y='chat_to_vr_conversion_pct', color_discrete_sequence=['blue'],
+                   labels={'month': 'Month', 'chat_to_vr_conversion_pct': 'VR Entry Rate (%)'})
+    fig2.update_layout(
+            title={'text': "VR Entry Rate Over Time", 'x': 0.5, 'xanchor': 'center'}
+            )
+
+    df3 = pull_monthly_unique_users(START_DATE, END_DATE)
+    fig3 = px.line(df3, x='month', y='unique_users', color_discrete_sequence=['green'],
+                   labels={'month': 'Month', 'unique_users': 'Unique Users'})
+    fig3.update_layout(
+            title={'text': "Monthly Unique Users", 'x': 0.5, 'xanchor': 'center'}
+            )
+
+    df4 = pull_monthly_average_matches_per_user(START_DATE, END_DATE)
+    fig4 = px.line(df4, x='month', y='avg_matches_per_user', color_discrete_sequence=['orange'],
+                   labels={'month': 'Month', 'avg_matches_per_user': 'Average Matches per User'})
+    fig4.update_layout(
+            title={'text': "Monthly Average Matches per User", 'x': 0.5, 'xanchor': 'center'}
+            )
+
+    today_unique_users_df = pull_today_unique_users()
+    today_unique_users = today_unique_users_df.at[0, 'unique_users']
+
+    swipes_df = pull_swipes_per_chat(START_DATE, END_DATE)
+    avg_swipes = swipes_df.at[0, 'avg_swipes_per_chat']
+
+    today_vr_df = pull_today_conversion_rate()
+    today_vr_chats = today_vr_df.at[0, 'chat_to_vr_conversion_pct']
+
+    return (f"Average Swipes Per Chat: {avg_swipes}",
+            fig1,
+            fig2,
+            f"VR Entry Rate Today: {today_vr_chats}%",
+            fig3,
+            fig4,
+            f"Unique Users Today: {today_unique_users}")
+
+
+if __name__ == '__main__':
+    app.run_server(debug=True)
