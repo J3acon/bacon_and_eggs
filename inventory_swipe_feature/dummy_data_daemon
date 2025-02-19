@@ -179,7 +179,7 @@ if __name__ == '__main__':
         df = generate_dummy_data(num_rows=starting_rows, skip_columns=skip_columns)
         fill_local_table(df, schema_name, table)
 
-    # Ongoing inserts to emulate live data state
+    # Ongoing inserts to emulate live data entry
     if GENERATE_NEW_DATA:
         print(f'Generating new data continuously for {schema_name}.{table}')
         while True:
