@@ -1,0 +1,191 @@
+""
+
+"""
+from gubastats import db
+import pandas as pd
+import datetime
+import time
+from faker import Faker
+import random
+
+FAKE = Faker()
+
+# Global variables to change if the script creates local tables, fills the tables with preliminary data, or generates new data over time respectively
+CREATE_LOCAL_TABLE = True
+FILL_LOCAL_TABLE = True
+GENERATE_NEW_DATA = True
+
+
+def create_local_database_and_table():
+    """
+    :return: Does not return anything, creates local table
+    """
+    create_reporting_project_combustion = f"""
+        CREATE DATABASE IF NOT EXISTS reporting_pc
+        ENGINE = Atomic
+    """
+    create_tracking_table = f"""
+        CREATE TABLE IF NOT EXISTS reporting_pc.tracking 
+        (
+            `dt` DATE DEFAULT toDate(created_at),
+            `account_id` UInt32,
+            `created_at` DateTime,
+            `chat_id` UInt64,
+            `user_id` UInt64,
+            `event_type` UInt32,
+            `event_type_name` LowCardinality(String) DEFAULT multiIf(event_type = 1, 'Swipe Left', 
+                                                                     event_type = 2, 'Swipe Right', 
+                                                                     event_type = 3, 'Super Like', 
+                                                                     event_type = 4, 'Price Filter Click',
+                                                                     event_type = 5, 'Sort',
+                                                                     event_type = 6, 'VDP Open',
+                                                                     'Unknown'
+                                                                     ),
+            `vr_session_id` Nullable(UInt64)
+            )
+        ENGINE = MergeTree
+        PARTITION BY toYYYYMM(dt)
+        ORDER BY (dt, account_id, created_at, chat_id, event_type_name)
+        SETTINGS index_granularity = 8192;
+        """
+    local_ch_conn.execute(create_reporting_project_combustion)
+    local_ch_conn.execute(create_tracking_table)
+
+
+def weighted_event_type():
+    """
+    This function attaches weights to different event types to simulate new data entering more realistically than true random entry
+    """
+    outcomes = [1, 2, 3, 4, 5, 6]
+    weights = [25, 13, 8, 4, 5, 4]
+    return random.choices(outcomes, weights, k=1)[0]
+
+
+def generate_chat_based_batches(num_rows, new_data=False):
+    """
+    :param num_rows: number of rows to generate
+    :param new_data: boolean to generate data with a timestamp from the last five minutes
+    """
+    current_time = datetime.datetime.now()
+    chat_batches = []
+    rows_generated = 0
+
+    while rows_generated < num_rows:
+        events_per_chat = random.randint(50, 70)
+        if rows_generated + events_per_chat > num_rows:
+            events_per_chat = num_rows - rows_generated
+
+# Create simulated ID numbers for chat session, account, and user
+        chat_id = FAKE.random_int(min=100000, max=999999)
+        account_id = FAKE.random_int(min=100000, max=350000)
+        user_id = FAKE.random_int(min=1000000, max=9999999)
+
+# If new_data is true, then the entries' created_at column will be the current timestamp, otherwise a random timestamp in the last two years.
+# The latter option would be for the initial table fill (i.e. FILL_TABLE = TRUE).
+        if new_data:
+            # Generate timestamps from the last 5 minutes
+            base_time = current_time
+            time_offsets = [datetime.timedelta(seconds=random.randint(0, 300)) for _ in range(events_per_chat)]
+        else:
+            # Generate timestamps from the last two years
+            base_time = FAKE.date_time_between(start_date=current_time - datetime.timedelta(days=365 * 2),
+                                               end_date=current_time)
+            time_offsets = [datetime.timedelta(seconds=random.randint(0, 600)) for _ in range(events_per_chat)]
+
+        chat_events = [{
+            'chat_id'   : chat_id,
+            'account_id': account_id,
+            'user_id'   : user_id,
+            'created_at': base_time + offset
+            } for offset in time_offsets]
+
+        chat_batches.extend(chat_events)
+        rows_generated += events_per_chat
+
+    return chat_batches
+
+
+def fill_local_table(dataframe, schema, table_name):
+    """
+    :param dataframe: dataframe with local test data
+    :param schema: string name of schema where target table exists
+    :param table_name: string name of table being filled
+    :return: Does not return anything, fills local table
+    """
+    data = dataframe.values.tolist()
+    columns = ','.join(dataframe.columns)
+
+    local_ch_conn.execute(
+            f'INSERT INTO {schema}.{table_name} ({columns}) VALUES',
+            data, types_check=True
+            )
+
+
+def generate_dummy_data(num_rows=50, skip_columns=None, new_data=False):
+    """
+    :param num_rows: Number of rows of dummy data to generate.
+    :param skip_columns: Optional list of column names to skip generating data for.
+    :param new_data: Boolean to indicate if the created_at column should be timestamped within the last five minutes
+    :return: simulated data, in batches, to put in the local table
+    """
+    skip_columns = skip_columns or []
+
+    chat_based_batches = generate_chat_based_batches(num_rows, new_data)
+
+    data = {
+        'chat_id'      : [],
+        'account_id'   : [],
+        'user_id'      : [],
+        'created_at'   : [],
+        'event_type'   : [],
+        'vr_session_id': []
+        }
+    for batch in chat_based_batches:
+        event_type = weighted_event_type()
+        vr_session_id = FAKE.random_int(min=100000, max=999999) if event_type in [3, 6] else 0
+        if 'chat_id' not in skip_columns:
+            data['chat_id'].append(batch['chat_id'])
+        if 'account_id' not in skip_columns:
+            data['account_id'].append(batch['account_id'])
+        if 'user_id' not in skip_columns:
+            data['user_id'].append(batch['user_id'])
+        if 'created_at' not in skip_columns:
+            data['created_at'].append(batch['created_at'])
+        if 'event_type' not in skip_columns:
+            data['event_type'].append(event_type)
+        if 'vr_session_id' not in skip_columns:
+            data['vr_session_id'].append(vr_session_id)
+
+    # Dummify!
+    dummy_df = pd.DataFrame(data)
+    return dummy_df
+
+
+if __name__ == '__main__':
+    local_ch_conn = db.clickhouse_connect('db_test_local')
+
+    schema_name = 'reporting_pc'
+    db = 'reporting_pc'
+    table = 'tracking'
+    starting_rows = 1000
+    skip_columns = ['dt', 'event_type_name']
+
+    if CREATE_LOCAL_TABLE:
+        print(f'Creating local table {schema_name}.{table}')
+        create_local_database_and_table()
+
+    # Create batch of historical data as starting point
+    if FILL_LOCAL_TABLE:
+        print(f'Filling local table {schema_name}.{table}')
+        df = generate_dummy_data(num_rows=starting_rows, skip_columns=skip_columns)
+        fill_local_table(df, schema_name, table)
+
+    # Ongoing inserts to emulate live data state
+    if GENERATE_NEW_DATA:
+        print(f'Generating new data continuously for {schema_name}.{table}')
+        while True:
+            # Generate 70 rows of new data every 8 seconds. These variables are meant to be adjusted as needed. The original version created 
+            # 10 rows every 5 seconds, but this did not move the visual live as hoped for presentation.
+            df = generate_dummy_data(num_rows=70, skip_columns=skip_columns, new_data=True)
+            fill_local_table(df, schema_name, table)
+            time.sleep(8)
