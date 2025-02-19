@@ -1,7 +1,6 @@
 ""
 
 """
-from gubastats import db
 import pandas as pd
 import datetime
 import time
