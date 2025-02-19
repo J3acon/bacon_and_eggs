@@ -1,5 +1,6 @@
 ""
-
+    :purpose: This script is designed to be used in conjunction with the dashboard_creation_and_testing file. This script
+    creates randomized data that can then be viewed live on the server-run dashboard.
 """
 import pandas as pd
 import datetime
@@ -40,7 +41,7 @@ def create_local_database_and_table():
                                                                      event_type = 6, 'VDP Open',
                                                                      'Unknown'
                                                                      ),
-            `vr_session_id` Nullable(UInt64)
+            `vehicle_session_id` Nullable(UInt64)
             )
         ENGINE = MergeTree
         PARTITION BY toYYYYMM(dt)
@@ -132,16 +133,16 @@ def generate_dummy_data(num_rows=50, skip_columns=None, new_data=False):
     chat_based_batches = generate_chat_based_batches(num_rows, new_data)
 
     data = {
-        'chat_id'      : [],
-        'account_id'   : [],
-        'user_id'      : [],
-        'created_at'   : [],
-        'event_type'   : [],
-        'vr_session_id': []
+        'chat_id'           : [],
+        'account_id'        : [],
+        'user_id'           : [],
+        'created_at'        : [],
+        'event_type'        : [],
+        'vehicle_session_id': []
         }
     for batch in chat_based_batches:
         event_type = weighted_event_type()
-        vr_session_id = FAKE.random_int(min=100000, max=999999) if event_type in [3, 6] else 0
+        vehicle_session_id = FAKE.random_int(min=100000, max=999999) if event_type in [3, 6] else 0
         if 'chat_id' not in skip_columns:
             data['chat_id'].append(batch['chat_id'])
         if 'account_id' not in skip_columns:
@@ -152,8 +153,8 @@ def generate_dummy_data(num_rows=50, skip_columns=None, new_data=False):
             data['created_at'].append(batch['created_at'])
         if 'event_type' not in skip_columns:
             data['event_type'].append(event_type)
-        if 'vr_session_id' not in skip_columns:
-            data['vr_session_id'].append(vr_session_id)
+        if 'vehicle_session_id' not in skip_columns:
+            data['vehicle_session_id'].append(vehicle_session_id)
 
     # Dummify!
     dummy_df = pd.DataFrame(data)

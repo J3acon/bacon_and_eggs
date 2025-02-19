@@ -1,5 +1,7 @@
 """
-
+    :purpose: This script is designed to be used in conjunction with the dummy_data_daemon file. This script runs a
+    simple dashboard on a live server that updates as the daemon generates steady simulated data. The tables cited in these
+    functions are created and filled in the other file.
 """
 import dash
 from dash import html, dcc
@@ -48,7 +50,8 @@ grid_style = {
 
 def pull_tracking_event_totals(start_date, end_date):
     """
-
+    :param start_date: earliest date of data to pull
+    :param end_date: latest date of data to pull
     """
     query = f"""
     SELECT event_type_name AS event,
@@ -62,7 +65,8 @@ def pull_tracking_event_totals(start_date, end_date):
 
 def pull_swipes_per_chat(start_date, end_date):
     """
-
+    :param start_date: earliest date of data to pull
+    :param end_date: latest date of data to pull
     """
     query = f"""
     SELECT countIf(created_at, event_type IN (1, 2, 3)) AS num_swipes,
@@ -74,15 +78,16 @@ def pull_swipes_per_chat(start_date, end_date):
     return local_ch_conn.query_dataframe(query)
 
 
-def pull_chat_to_vr_open_rate(start_date, end_date):
+def pull_chat_to_vehicle_page_rate(start_date, end_date):
     """
-
+    :param start_date: earliest date of data to pull
+    :param end_date: latest date of data to pull
     """
     query = f"""
     SELECT formatDateTime(dt, '%Y-%m') AS month,
            uniq(chat_id) AS num_chats,
-           uniqIf(chat_id, vr_session_id > 0) AS vr_opens,
-           round(100*vr_opens/num_chats) AS chat_to_vr_conversion_pct
+           uniqIf(chat_id, vehicle_session_id > 0) AS vehicle_opens,
+           round(100*vehicle_opens/num_chats) AS chat_to_vehicle_conversion_pct
     FROM reporting_pc.tracking
     WHERE dt BETWEEN '{start_date}' AND '{end_date}'
     GROUP BY month
@@ -93,7 +98,8 @@ def pull_chat_to_vr_open_rate(start_date, end_date):
 
 def pull_monthly_average_matches_per_user(start_date, end_date):
     """
-
+    :param start_date: earliest date of data to pull
+    :param end_date: latest date of data to pull
     """
     query = f"""
     SELECT formatDateTime(dt, '%Y-%m') AS month,
@@ -110,13 +116,14 @@ def pull_monthly_average_matches_per_user(start_date, end_date):
 
 def pull_today_conversion_rate():
     """
-
+    :param start_date: earliest date of data to pull
+    :param end_date: latest date of data to pull
     """
     today = datetime.today().strftime('%Y-%m-%d')
     query = f'''
     SELECT uniq(chat_id) AS num_chats,
-           uniqIf(chat_id, vr_session_id > 0) AS vr_opens,
-           round((100*vr_opens/num_chats), 2) AS chat_to_vr_conversion_pct
+           uniqIf(chat_id, vehicle_session_id > 0) AS vehicle_opens,
+           round((100*vehicle_opens/num_chats), 2) AS chat_to_vehicle_conversion_pct
     from reporting_pc.tracking
     WHERE dt = '{today}';
     '''
@@ -125,7 +132,8 @@ def pull_today_conversion_rate():
 
 def pull_monthly_unique_users(start_date, end_date):
     """
-
+    :param start_date: earliest date of data to pull
+    :param end_date: latest date of data to pull
     """
     query = f'''
     SELECT formatDateTime(dt, '%Y-%m') AS month,
@@ -140,7 +148,8 @@ def pull_monthly_unique_users(start_date, end_date):
 
 def pull_today_unique_users():
     """
-
+    :param start_date: earliest date of data to pull
+    :param end_date: latest date of data to pull
     """
     today = datetime.today().strftime('%Y-%m-%d')
     query = f'''
@@ -216,9 +225,9 @@ def update_event_totals_graph(n1, n2, n3, n4, n5, n6, n7):
             showlegend=False
             )
 
-    df2 = pull_chat_to_vr_open_rate(START_DATE, END_DATE)
-    fig2 = px.line(df2, x='month', y='chat_to_vr_conversion_pct', color_discrete_sequence=['blue'],
-                   labels={'month': 'Month', 'chat_to_vr_conversion_pct': 'VR Entry Rate (%)'})
+    df2 = pull_chat_to_vehicle_open_rate(START_DATE, END_DATE)
+    fig2 = px.line(df2, x='month', y='chat_to_vehicle_conversion_pct', color_discrete_sequence=['blue'],
+                   labels={'month': 'Month', 'chat_to_vehicle_conversion_pct': 'VR Entry Rate (%)'})
     fig2.update_layout(
             title={'text': "VR Entry Rate Over Time", 'x': 0.5, 'xanchor': 'center'}
             )
@@ -243,13 +252,13 @@ def update_event_totals_graph(n1, n2, n3, n4, n5, n6, n7):
     swipes_df = pull_swipes_per_chat(START_DATE, END_DATE)
     avg_swipes = swipes_df.at[0, 'avg_swipes_per_chat']
 
-    today_vr_df = pull_today_conversion_rate()
-    today_vr_chats = today_vr_df.at[0, 'chat_to_vr_conversion_pct']
+    today_vehicle_df = pull_today_conversion_rate()
+    today_vehicle_chats = today_vehicle_df.at[0, 'chat_to_vehicle_conversion_pct']
 
     return (f"Average Swipes Per Chat: {avg_swipes}",
             fig1,
             fig2,
-            f"VR Entry Rate Today: {today_vr_chats}%",
+            f"VR Entry Rate Today: {today_vehicle_chats}%",
             fig3,
             fig4,
             f"Unique Users Today: {today_unique_users}")
